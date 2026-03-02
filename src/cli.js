@@ -8,10 +8,28 @@ function fileExists(filePath) {
   return fs.existsSync(filePath);
 }
 
+function findDevConfigPath(cwd = process.cwd()) {
+  let dir = path.resolve(cwd);
+
+  while (true) {
+    const devPath = path.join(dir, "dev.yml");
+    if (fileExists(devPath)) {
+      return devPath;
+    }
+
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      return null;
+    }
+
+    dir = parent;
+  }
+}
+
 function readDevConfig(cwd = process.cwd()) {
-  const devPath = path.join(cwd, "dev.yml");
-  if (!fileExists(devPath)) {
-    throw new Error("No dev.yml found in current directory");
+  const devPath = findDevConfigPath(cwd);
+  if (!devPath) {
+    throw new Error("No dev.yml found in current directory or ancestors");
   }
 
   const raw = fs.readFileSync(devPath, "utf8");
@@ -22,6 +40,25 @@ function readDevConfig(cwd = process.cwd()) {
   }
 
   return parsed;
+}
+
+function resolveDevConfig(cwd = process.cwd()) {
+  const devPath = findDevConfigPath(cwd);
+  if (!devPath) {
+    throw new Error("No dev.yml found in current directory or ancestors");
+  }
+
+  const raw = fs.readFileSync(devPath, "utf8");
+  const parsed = parse(raw) ?? {};
+
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("dev.yml must contain a YAML object at the root");
+  }
+
+  return {
+    config: parsed,
+    configDir: path.dirname(devPath),
+  };
 }
 
 function findPackageManager(cwd = process.cwd()) {
@@ -260,7 +297,7 @@ function createInitConfig(cwd = process.cwd()) {
 
 async function handleInit(cwd = process.cwd()) {
   const devPath = path.join(cwd, "dev.yml");
-  if (fileExists(devPath)) {
+  if (devPath && fileExists(devPath)) {
     throw new Error("dev.yml already exists in current directory");
   }
 
@@ -292,8 +329,8 @@ async function handleClone(target, cwd = process.cwd()) {
 }
 
 async function handleUp(cwd = process.cwd()) {
-  const config = readDevConfig(cwd);
-  const manager = findPackageManager(cwd);
+  const { config, configDir } = resolveDevConfig(cwd);
+  const manager = findPackageManager(configDir);
   const up = config.up;
 
   const shouldInstall = !Array.isArray(up) || up.length === 0 || up.includes("install");
@@ -305,7 +342,7 @@ async function handleUp(cwd = process.cwd()) {
 
   const command = installCommandFor(manager);
   console.log(`Using ${manager}: ${command.cmd} ${command.args.join(" ")}`);
-  return spawnCommand(command.cmd, command.args, { cwd });
+  return spawnCommand(command.cmd, command.args, { cwd: configDir });
 }
 
 function formatTaskDescriptor(taskName, definition) {
@@ -355,7 +392,7 @@ function printHelp(cwd = process.cwd()) {
     "  dev clone git@github.com:myorg/myrepo.git",
   ];
 
-  const devPath = path.join(cwd, "dev.yml");
+  const devPath = findDevConfigPath(cwd);
   if (fileExists(devPath)) {
     try {
       const config = readDevConfig(cwd);
@@ -403,12 +440,12 @@ export async function runCli(args, cwd = process.cwd()) {
     return code;
   }
 
-  const config = readDevConfig(cwd);
+  const { config, configDir } = resolveDevConfig(cwd);
   const tasks = normalizeTasks(config);
   const resolved = resolveTask(tasks, command);
 
   if (resolved) {
-    const code = await runTaskDefinition(resolved.taskKey, resolved.definition, cwd);
+    const code = await runTaskDefinition(resolved.taskKey, resolved.definition, configDir);
     if (code !== 0) {
       process.exitCode = code;
     }
@@ -416,11 +453,11 @@ export async function runCli(args, cwd = process.cwd()) {
   }
 
   if (!reservedCommands.has(command)) {
-    const scripts = readPackageScripts(cwd);
+    const scripts = readPackageScripts(configDir);
     if (scripts && typeof scripts[command] === "string") {
-      const manager = findPackageManager(cwd);
+      const manager = findPackageManager(configDir);
       const scriptCommand = scriptRunCommandFor(manager, command);
-      const code = await spawnCommand(scriptCommand.cmd, scriptCommand.args, { cwd });
+      const code = await spawnCommand(scriptCommand.cmd, scriptCommand.args, { cwd: configDir });
       if (code !== 0) {
         process.exitCode = code;
       }
@@ -439,6 +476,7 @@ export const _internal = {
   readPackageJson,
   readPackageScripts,
   resolveTask,
+  findDevConfigPath,
   normalizeRepo,
   repoFolderName,
 };

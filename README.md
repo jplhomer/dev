@@ -19,7 +19,7 @@ dev --help
 
 - `dev init` - scaffold a `dev.yml` in the current project
 - `dev up` - detect package manager and run install
-- `dev <task>` - run a task from `dev.yml`
+- `dev <task>` - run a task from nearest `dev.yml` (current directory or ancestors)
 - `dev clone <owner/repo|git-url>` - clone a repository
 
 ## `dev init`
@@ -30,6 +30,8 @@ dev --help
 - If `package.json` is missing, it scaffolds a generic starter config.
 
 ## `dev.yml` example
+
+`dev up` and `dev <task>` resolve `dev.yml` by walking up from the current directory. This lets you run commands inside nested folders of a project while still using the project-root config.
 
 ```yaml
 type: node

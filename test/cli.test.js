@@ -115,6 +115,16 @@ test("readPackageScripts returns scripts object when present", async () => {
   });
 });
 
+test("findDevConfigPath resolves from descendant directory", async () => {
+  await withTempDir(async (dir) => {
+    fs.writeFileSync(path.join(dir, "dev.yml"), "tasks: {}\n");
+    const nestedDir = path.join(dir, "apps", "web");
+    fs.mkdirSync(nestedDir, { recursive: true });
+
+    assert.equal(_internal.findDevConfigPath(nestedDir), path.join(dir, "dev.yml"));
+  });
+});
+
 test("runCli falls back to package scripts when task missing", async () => {
   await withTempDir(async (dir) => {
     fs.writeFileSync(
@@ -263,5 +273,26 @@ test("runCli ignores description metadata in command-object tasks", async () => 
 
     const code = await runCli(["check"], dir);
     assert.equal(code, 0);
+  });
+});
+
+test("runCli runs ancestor dev.yml tasks from config directory", async () => {
+  await withTempDir(async (dir) => {
+    fs.writeFileSync(
+      path.join(dir, "dev.yml"),
+      [
+        "tasks:",
+        "  marker:",
+        '    run: node -e "require(\'node:fs\').writeFileSync(\'ran-from-root.txt\', \'ok\')"',
+      ].join("\n"),
+    );
+
+    const nestedDir = path.join(dir, "apps", "api");
+    fs.mkdirSync(nestedDir, { recursive: true });
+
+    const code = await runCli(["marker"], nestedDir);
+    assert.equal(code, 0);
+    assert.equal(fs.existsSync(path.join(dir, "ran-from-root.txt")), true);
+    assert.equal(fs.existsSync(path.join(nestedDir, "ran-from-root.txt")), false);
   });
 });
