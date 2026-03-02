@@ -1,0 +1,25 @@
+type: node
+
+up:
+  - install
+
+tasks:
+  test:
+    aliases: [t]
+    run: npm test
+
+  lint:
+    run: npx oxlint .
+
+  format:
+    aliases: [fmt]
+    run: npx oxfmt .
+
+  check:
+    lint: npx oxlint .
+    format: npx oxfmt --check .
+    test: npm test
+
+  dev:
+    aliases: [s]
+    run: node ./bin/dev.js --help
