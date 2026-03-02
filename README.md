@@ -1,4 +1,4 @@
-# dev-home
+# dev
 
 A lightweight `dev` CLI for local projects, inspired by workplace tooling.
 
