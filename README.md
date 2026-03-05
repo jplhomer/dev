@@ -21,6 +21,32 @@ dev --help
 - `dev up` - detect package manager and run install
 - `dev <task>` - run a task from nearest `dev.yml` (current directory or ancestors)
 - `dev clone <owner/repo|git-url>` - clone a repository
+- `dev cd <repo|owner/repo|path>` - print a project directory from configured dev roots
+- `dev root [list|add|remove] [path]` - manage dev roots (default: `~/src/github.com`)
+
+## Project roots and `dev cd`
+
+`dev` keeps a list of project roots in `~/.config/dev/config.yml`.
+
+- Default root: `~/src/github.com`
+- Add extra roots (for example `~/Projects`):
+
+```bash
+dev root add ~/Projects
+```
+
+- List configured roots:
+
+```bash
+dev root list
+```
+
+- Jump to a repo from anywhere:
+
+```bash
+cd "$(dev cd owner/repo)"
+cd "$(dev cd my-repo)"
+```
 
 ## `dev init`
 

@@ -104,6 +104,65 @@ test("repoFolderName strips .git suffix", () => {
   assert.equal(_internal.repoFolderName("git@github.com:owner/repo.git"), "repo");
 });
 
+test("getDevRoots defaults to ~/src/github.com", async () => {
+  await withTempDir(async (homeDir) => {
+    const roots = _internal.getDevRoots(homeDir);
+    assert.deepEqual(roots, [path.join(homeDir, "src", "github.com")]);
+  });
+});
+
+test("getDevRoots reads configured roots", async () => {
+  await withTempDir(async (homeDir) => {
+    const configDir = path.join(homeDir, ".config", "dev");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.yml"),
+      ["roots:", "  - ~/Projects", "  - ~/src/github.com"].join("\n"),
+    );
+
+    const roots = _internal.getDevRoots(homeDir);
+    assert.deepEqual(roots, [
+      path.join(homeDir, "Projects"),
+      path.join(homeDir, "src", "github.com"),
+    ]);
+  });
+});
+
+test("parseRepoCoordinates supports shorthand and github urls", () => {
+  assert.deepEqual(_internal.parseRepoCoordinates("owner/repo"), {
+    owner: "owner",
+    repo: "repo",
+  });
+  assert.deepEqual(_internal.parseRepoCoordinates("git@github.com:owner/repo.git"), {
+    owner: "owner",
+    repo: "repo",
+  });
+  assert.deepEqual(_internal.parseRepoCoordinates("https://github.com/owner/repo"), {
+    owner: "owner",
+    repo: "repo",
+  });
+});
+
+test("resolveCdTarget resolves repo from configured roots", async () => {
+  await withTempDir(async (dir) => {
+    const githubRoot = path.join(dir, "src", "github.com");
+    const projectsRoot = path.join(dir, "Projects");
+    fs.mkdirSync(path.join(githubRoot, "acme", "api"), { recursive: true });
+    fs.mkdirSync(path.join(projectsRoot, "website"), { recursive: true });
+
+    const roots = [githubRoot, projectsRoot];
+
+    assert.equal(
+      _internal.resolveCdTarget("acme/api", roots, dir, dir),
+      path.join(githubRoot, "acme", "api"),
+    );
+    assert.equal(
+      _internal.resolveCdTarget("website", roots, dir, dir),
+      path.join(projectsRoot, "website"),
+    );
+  });
+});
+
 test("readPackageScripts returns scripts object when present", async () => {
   await withTempDir(async (dir) => {
     fs.writeFileSync(
@@ -158,6 +217,7 @@ test("runCli help lists project tasks and aliases", async () => {
 
     const output = await captureStdout(() => runCli(["--help"], dir));
     assert.match(output, /Project Tasks:/);
+    assert.match(output, /dev cd <repo\|owner\/repo\|path>/);
     assert.match(output, /server - Start local dev server \(aliases: s\)/);
     assert.match(output, /check/);
   });

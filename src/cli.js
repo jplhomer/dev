@@ -1,8 +1,191 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import { parse, stringify } from "yaml";
+
+const DEFAULT_DEV_ROOT = "~/src/github.com";
+
+function expandHomePath(input, homeDir = os.homedir()) {
+  if (typeof input !== "string" || input.length === 0) {
+    return input;
+  }
+
+  if (input === "~") {
+    return homeDir;
+  }
+
+  if (input.startsWith("~/")) {
+    return path.join(homeDir, input.slice(2));
+  }
+
+  return input;
+}
+
+function collapseHomePath(input, homeDir = os.homedir()) {
+  const normalizedHome = path.resolve(homeDir);
+  const normalizedInput = path.resolve(input);
+
+  if (normalizedInput === normalizedHome) {
+    return "~";
+  }
+
+  if (normalizedInput.startsWith(`${normalizedHome}${path.sep}`)) {
+    return `~/${normalizedInput.slice(normalizedHome.length + 1)}`;
+  }
+
+  return normalizedInput;
+}
+
+function getGlobalConfigPath(homeDir = os.homedir()) {
+  return path.join(homeDir, ".config", "dev", "config.yml");
+}
+
+function readGlobalConfig(homeDir = os.homedir()) {
+  const configPath = getGlobalConfigPath(homeDir);
+  if (!fileExists(configPath)) {
+    return {};
+  }
+
+  const raw = fs.readFileSync(configPath, "utf8");
+  const parsed = parse(raw) ?? {};
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Global dev config must contain a YAML object at the root");
+  }
+
+  return parsed;
+}
+
+function writeGlobalConfig(config, homeDir = os.homedir()) {
+  const configPath = getGlobalConfigPath(homeDir);
+  const configDir = path.dirname(configPath);
+  fs.mkdirSync(configDir, { recursive: true });
+  const content = stringify(config, { lineWidth: 0 });
+  fs.writeFileSync(configPath, content, "utf8");
+}
+
+function getDevRoots(homeDir = os.homedir()) {
+  const config = readGlobalConfig(homeDir);
+  const rawRoots = Array.isArray(config.roots) ? config.roots : [DEFAULT_DEV_ROOT];
+
+  const seen = new Set();
+  const roots = [];
+
+  for (const root of rawRoots) {
+    if (typeof root !== "string" || root.trim().length === 0) {
+      continue;
+    }
+
+    const resolved = path.resolve(expandHomePath(root.trim(), homeDir));
+    if (seen.has(resolved)) {
+      continue;
+    }
+
+    seen.add(resolved);
+    roots.push(resolved);
+  }
+
+  if (roots.length === 0) {
+    roots.push(path.resolve(expandHomePath(DEFAULT_DEV_ROOT, homeDir)));
+  }
+
+  return roots;
+}
+
+function writeDevRoots(roots, homeDir = os.homedir()) {
+  const storedRoots = roots.map((root) => collapseHomePath(root, homeDir));
+  writeGlobalConfig({ roots: storedRoots }, homeDir);
+}
+
+function parseRepoCoordinates(input) {
+  if (typeof input !== "string" || input.trim().length === 0) {
+    return null;
+  }
+
+  const value = input.trim();
+
+  const httpsMatch = value.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  if (httpsMatch) {
+    return {
+      owner: httpsMatch[1],
+      repo: httpsMatch[2],
+    };
+  }
+
+  const sshMatch = value.match(/^(?:git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  if (sshMatch) {
+    return {
+      owner: sshMatch[1],
+      repo: sshMatch[2],
+    };
+  }
+
+  const shorthandMatch = value.match(/^([^\s/:]+)\/([^\s/]+)$/);
+  if (shorthandMatch) {
+    return {
+      owner: shorthandMatch[1],
+      repo: shorthandMatch[2].replace(/\.git$/, ""),
+    };
+  }
+
+  return null;
+}
+
+function resolveCdTarget(target, roots, cwd = process.cwd(), homeDir = os.homedir()) {
+  if (typeof target !== "string" || target.trim().length === 0) {
+    throw new Error("Usage: dev cd <repo|owner/repo|path>");
+  }
+
+  const value = target.trim();
+  const maybePath = expandHomePath(value, homeDir);
+  const pathLike = value.startsWith(".") || value.startsWith("/") || value.startsWith("~");
+
+  if (pathLike) {
+    const candidate = path.resolve(cwd, maybePath);
+    if (fileExists(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+
+    return null;
+  }
+
+  const coords = parseRepoCoordinates(value);
+  const candidates = [];
+
+  if (coords) {
+    for (const root of roots) {
+      candidates.push(path.join(root, coords.owner, coords.repo));
+      candidates.push(path.join(root, coords.repo));
+    }
+  } else {
+    for (const root of roots) {
+      candidates.push(path.join(root, value));
+
+      if (!fileExists(root)) {
+        continue;
+      }
+
+      const children = fs.readdirSync(root, { withFileTypes: true });
+      for (const child of children) {
+        if (!child.isDirectory()) {
+          continue;
+        }
+
+        candidates.push(path.join(root, child.name, value));
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (fileExists(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
 
 function fileExists(filePath) {
   return fs.existsSync(filePath);
@@ -328,6 +511,77 @@ async function handleClone(target, cwd = process.cwd()) {
   return 0;
 }
 
+function handleRoot(args, homeDir = os.homedir()) {
+  const subcommand = args[1] ?? "list";
+
+  if (subcommand === "list") {
+    const roots = getDevRoots(homeDir);
+    for (const root of roots) {
+      console.log(root);
+    }
+    return 0;
+  }
+
+  if (subcommand === "add") {
+    const inputPath = args[2];
+    if (!inputPath) {
+      throw new Error("Usage: dev root add <path>");
+    }
+
+    const roots = getDevRoots(homeDir);
+    const resolved = path.resolve(expandHomePath(inputPath, homeDir));
+
+    if (!fileExists(resolved) || !fs.statSync(resolved).isDirectory()) {
+      throw new Error(`Directory does not exist: ${resolved}`);
+    }
+
+    if (roots.includes(resolved)) {
+      console.log(`Already configured: ${resolved}`);
+      return 0;
+    }
+
+    roots.push(resolved);
+    writeDevRoots(roots, homeDir);
+    console.log(`Added dev root: ${resolved}`);
+    return 0;
+  }
+
+  if (subcommand === "remove" || subcommand === "rm") {
+    const inputPath = args[2];
+    if (!inputPath) {
+      throw new Error("Usage: dev root remove <path>");
+    }
+
+    const roots = getDevRoots(homeDir);
+    const resolved = path.resolve(expandHomePath(inputPath, homeDir));
+    const nextRoots = roots.filter((root) => root !== resolved);
+
+    if (nextRoots.length === roots.length) {
+      throw new Error(`Dev root not found: ${resolved}`);
+    }
+
+    writeDevRoots(nextRoots, homeDir);
+    console.log(`Removed dev root: ${resolved}`);
+    return 0;
+  }
+
+  throw new Error("Usage: dev root [list|add|remove] [path]");
+}
+
+function handleCd(args, cwd = process.cwd(), homeDir = os.homedir()) {
+  const target = args[1];
+  const roots = getDevRoots(homeDir);
+  const destination = resolveCdTarget(target, roots, cwd, homeDir);
+
+  if (!destination) {
+    const searched = roots.join(", ");
+    throw new Error(`Could not find project: ${target}. Searched roots: ${searched}`);
+  }
+
+  console.log(destination);
+  return 0;
+}
+
 async function handleUp(cwd = process.cwd()) {
   const { config, configDir } = resolveDevConfig(cwd);
   const manager = findPackageManager(configDir);
@@ -381,11 +635,15 @@ function printHelp(cwd = process.cwd()) {
     "Usage:",
     "  dev init",
     "  dev up",
+    "  dev cd <repo|owner/repo|path>",
+    "  dev root [list|add|remove] [path]",
     "  dev clone <owner/repo|git-url>",
     "  dev <task>",
     "",
     "Examples:",
     "  dev up",
+    "  cd \"$(dev cd myorg/myrepo)\"",
+    "  dev root add ~/Projects",
     "  dev s",
     "  dev check",
     "  dev clone myorg/myrepo",
@@ -393,7 +651,7 @@ function printHelp(cwd = process.cwd()) {
   ];
 
   const devPath = findDevConfigPath(cwd);
-  if (fileExists(devPath)) {
+  if (devPath && fileExists(devPath)) {
     try {
       const config = readDevConfig(cwd);
       const tasks = normalizeTasks(config);
@@ -415,7 +673,18 @@ function printHelp(cwd = process.cwd()) {
 
 export async function runCli(args, cwd = process.cwd()) {
   const [command] = args;
-  const reservedCommands = new Set(["init", "up", "clone", "help", "--help", "-h"]);
+  const homeDir = os.homedir();
+  const reservedCommands = new Set([
+    "init",
+    "up",
+    "cd",
+    "root",
+    "roots",
+    "clone",
+    "help",
+    "--help",
+    "-h",
+  ]);
 
   if (!command || command === "-h" || command === "--help" || command === "help") {
     printHelp(cwd);
@@ -424,6 +693,18 @@ export async function runCli(args, cwd = process.cwd()) {
 
   if (command === "clone") {
     const code = await handleClone(args[1], cwd);
+    if (code !== 0) process.exitCode = code;
+    return code;
+  }
+
+  if (command === "cd") {
+    const code = handleCd(args, cwd, homeDir);
+    if (code !== 0) process.exitCode = code;
+    return code;
+  }
+
+  if (command === "root" || command === "roots") {
+    const code = handleRoot(args, homeDir);
     if (code !== 0) process.exitCode = code;
     return code;
   }
@@ -470,6 +751,9 @@ export async function runCli(args, cwd = process.cwd()) {
 
 export const _internal = {
   createInitConfig,
+  getDevRoots,
+  parseRepoCoordinates,
+  resolveCdTarget,
   findPackageManager,
   installCommandFor,
   scriptRunCommandFor,
