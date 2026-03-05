@@ -22,6 +22,7 @@ dev --help
 - `dev <task>` - run a task from nearest `dev.yml` (current directory or ancestors)
 - `dev clone <owner/repo|git-url>` - clone a repository
 - `dev cd <repo|owner/repo|path>` - print a project directory from configured dev roots
+- `dev shell-init` - print shell integration so `dev cd <repo>` changes directory
 - `dev root [list|add|remove] [path]` - manage dev roots (default: `~/src/github.com`)
 
 ## Project roots and `dev cd`
@@ -47,6 +48,16 @@ dev root list
 cd "$(dev cd owner/repo)"
 cd "$(dev cd my-repo)"
 ```
+
+`dev cd` also matches directories with leading numeric prefixes (for example `2026-03-04-my-repo`), so `dev cd my-repo` still resolves.
+
+- Optional shell integration (`zsh`/`bash`) so `dev cd <repo>` changes your current shell directory:
+
+```bash
+eval "$(dev shell-init)"
+```
+
+Add that line to your shell startup file (`~/.zshrc` or `~/.bashrc`) to keep it enabled.
 
 ## `dev init`
 

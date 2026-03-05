@@ -133,6 +133,31 @@ function parseRepoCoordinates(input) {
   return null;
 }
 
+function stripNumericPrefixes(name) {
+  return name.replace(/^(?:\d+[._-])+/u, "");
+}
+
+function listMatchingDirectories(baseDir, targetName) {
+  if (!fileExists(baseDir) || !fs.statSync(baseDir).isDirectory()) {
+    return [];
+  }
+
+  const matches = [];
+  const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    if (entry.name === targetName || stripNumericPrefixes(entry.name) === targetName) {
+      matches.push(path.join(baseDir, entry.name));
+    }
+  }
+
+  return matches;
+}
+
 function resolveCdTarget(target, roots, cwd = process.cwd(), homeDir = os.homedir()) {
   if (typeof target !== "string" || target.trim().length === 0) {
     throw new Error("Usage: dev cd <repo|owner/repo|path>");
@@ -153,15 +178,37 @@ function resolveCdTarget(target, roots, cwd = process.cwd(), homeDir = os.homedi
 
   const coords = parseRepoCoordinates(value);
   const candidates = [];
+  const seenCandidates = new Set();
+
+  const addCandidate = (candidate) => {
+    if (seenCandidates.has(candidate)) {
+      return;
+    }
+
+    seenCandidates.add(candidate);
+    candidates.push(candidate);
+  };
 
   if (coords) {
     for (const root of roots) {
-      candidates.push(path.join(root, coords.owner, coords.repo));
-      candidates.push(path.join(root, coords.repo));
+      addCandidate(path.join(root, coords.owner, coords.repo));
+      addCandidate(path.join(root, coords.repo));
+
+      for (const candidate of listMatchingDirectories(path.join(root, coords.owner), coords.repo)) {
+        addCandidate(candidate);
+      }
+
+      for (const candidate of listMatchingDirectories(root, coords.repo)) {
+        addCandidate(candidate);
+      }
     }
   } else {
     for (const root of roots) {
-      candidates.push(path.join(root, value));
+      addCandidate(path.join(root, value));
+
+      for (const candidate of listMatchingDirectories(root, value)) {
+        addCandidate(candidate);
+      }
 
       if (!fileExists(root)) {
         continue;
@@ -173,7 +220,11 @@ function resolveCdTarget(target, roots, cwd = process.cwd(), homeDir = os.homedi
           continue;
         }
 
-        candidates.push(path.join(root, child.name, value));
+        addCandidate(path.join(root, child.name, value));
+
+        for (const candidate of listMatchingDirectories(path.join(root, child.name), value)) {
+          addCandidate(candidate);
+        }
       }
     }
   }
@@ -579,6 +630,33 @@ function handleCd(args, cwd = process.cwd(), homeDir = os.homedir()) {
   }
 
   console.log(destination);
+
+  if (process.stdout.isTTY) {
+    console.error('Tip: run `cd "$(dev cd <repo>)"` or enable `eval "$(dev shell-init)"`');
+  }
+
+  return 0;
+}
+
+function handleShellInit() {
+  const script = [
+    "dev() {",
+    '  if [ "$1" = "cd" ]; then',
+    "    shift",
+    "    local __dev_dest",
+    '    if ! __dev_dest="$(command dev cd \"$@\")"; then',
+    "      return $?",
+    "    fi",
+    '    if [ -n "$__dev_dest" ]; then',
+    '      builtin cd "$__dev_dest"',
+    "    fi",
+    "    return 0",
+    "  fi",
+    '  command dev "$@"',
+    "}",
+  ].join("\n");
+
+  console.log(script);
   return 0;
 }
 
@@ -636,6 +714,7 @@ function printHelp(cwd = process.cwd()) {
     "  dev init",
     "  dev up",
     "  dev cd <repo|owner/repo|path>",
+    "  dev shell-init",
     "  dev root [list|add|remove] [path]",
     "  dev clone <owner/repo|git-url>",
     "  dev <task>",
@@ -643,6 +722,7 @@ function printHelp(cwd = process.cwd()) {
     "Examples:",
     "  dev up",
     "  cd \"$(dev cd myorg/myrepo)\"",
+    "  eval \"$(dev shell-init)\"",
     "  dev root add ~/Projects",
     "  dev s",
     "  dev check",
@@ -678,6 +758,7 @@ export async function runCli(args, cwd = process.cwd()) {
     "init",
     "up",
     "cd",
+    "shell-init",
     "root",
     "roots",
     "clone",
@@ -699,6 +780,12 @@ export async function runCli(args, cwd = process.cwd()) {
 
   if (command === "cd") {
     const code = handleCd(args, cwd, homeDir);
+    if (code !== 0) process.exitCode = code;
+    return code;
+  }
+
+  if (command === "shell-init") {
+    const code = handleShellInit();
     if (code !== 0) process.exitCode = code;
     return code;
   }
@@ -753,6 +840,7 @@ export const _internal = {
   createInitConfig,
   getDevRoots,
   parseRepoCoordinates,
+  stripNumericPrefixes,
   resolveCdTarget,
   findPackageManager,
   installCommandFor,

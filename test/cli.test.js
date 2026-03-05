@@ -143,6 +143,12 @@ test("parseRepoCoordinates supports shorthand and github urls", () => {
   });
 });
 
+test("stripNumericPrefixes removes leading numeric segments", () => {
+  assert.equal(_internal.stripNumericPrefixes("2026-03-04-ask-bonk"), "ask-bonk");
+  assert.equal(_internal.stripNumericPrefixes("42_ask-bonk"), "ask-bonk");
+  assert.equal(_internal.stripNumericPrefixes("ask-bonk"), "ask-bonk");
+});
+
 test("resolveCdTarget resolves repo from configured roots", async () => {
   await withTempDir(async (dir) => {
     const githubRoot = path.join(dir, "src", "github.com");
@@ -159,6 +165,28 @@ test("resolveCdTarget resolves repo from configured roots", async () => {
     assert.equal(
       _internal.resolveCdTarget("website", roots, dir, dir),
       path.join(projectsRoot, "website"),
+    );
+  });
+});
+
+test("resolveCdTarget resolves numeric-prefixed directories", async () => {
+  await withTempDir(async (dir) => {
+    const projectsRoot = path.join(dir, "Projects");
+    const githubRoot = path.join(dir, "src", "github.com");
+
+    fs.mkdirSync(path.join(projectsRoot, "2026-03-04-ask-bonk"), { recursive: true });
+    fs.mkdirSync(path.join(githubRoot, "acme", "2026-03-04-api"), { recursive: true });
+
+    const roots = [projectsRoot, githubRoot];
+
+    assert.equal(
+      _internal.resolveCdTarget("ask-bonk", roots, dir, dir),
+      path.join(projectsRoot, "2026-03-04-ask-bonk"),
+    );
+
+    assert.equal(
+      _internal.resolveCdTarget("acme/api", roots, dir, dir),
+      path.join(githubRoot, "acme", "2026-03-04-api"),
     );
   });
 });
@@ -218,8 +246,18 @@ test("runCli help lists project tasks and aliases", async () => {
     const output = await captureStdout(() => runCli(["--help"], dir));
     assert.match(output, /Project Tasks:/);
     assert.match(output, /dev cd <repo\|owner\/repo\|path>/);
+    assert.match(output, /dev shell-init/);
     assert.match(output, /server - Start local dev server \(aliases: s\)/);
     assert.match(output, /check/);
+  });
+});
+
+test("runCli shell-init prints a shell wrapper function", async () => {
+  await withTempDir(async (dir) => {
+    const output = await captureStdout(() => runCli(["shell-init"], dir));
+    assert.match(output, /dev\(\) \{/);
+    assert.match(output, /command dev cd/);
+    assert.match(output, /builtin cd/);
   });
 });
 
