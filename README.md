@@ -58,6 +58,7 @@ eval "$(dev shell-init)"
 ```
 
 Add that line to your shell startup file (`~/.zshrc` or `~/.bashrc`) to keep it enabled.
+With shell integration enabled, `dev clone <owner/repo|git-url>` also runs `dev cd` after a successful clone and moves into the cloned project automatically.
 
 ## `dev init`
 

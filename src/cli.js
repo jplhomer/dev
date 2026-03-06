@@ -545,13 +545,41 @@ async function handleInit(cwd = process.cwd()) {
   return 0;
 }
 
-async function handleClone(target, cwd = process.cwd()) {
+function resolveClonePlan(target, roots, fallbackCwd = process.cwd()) {
+  const cloneRoot = Array.isArray(roots) && roots.length > 0 ? roots[0] : fallbackCwd;
+  const coords = parseRepoCoordinates(target);
+
+  if (coords) {
+    const parentDir = path.join(cloneRoot, coords.owner);
+    return {
+      cloneCwd: parentDir,
+      destination: path.join(parentDir, coords.repo),
+    };
+  }
+
+  return {
+    cloneCwd: cloneRoot,
+    destination: null,
+  };
+}
+
+async function handleClone(target, cwd = process.cwd(), homeDir = os.homedir()) {
   if (!target) {
     throw new Error("Usage: dev clone <owner/repo|git-url>");
   }
 
   const repo = normalizeRepo(target);
-  const code = await spawnCommand("git", ["clone", repo], { cwd });
+  const roots = getDevRoots(homeDir);
+  const clonePlan = resolveClonePlan(target, roots, cwd);
+
+  fs.mkdirSync(clonePlan.cloneCwd, { recursive: true });
+
+  const cloneArgs = ["clone", repo];
+  if (clonePlan.destination) {
+    cloneArgs.push(clonePlan.destination);
+  }
+
+  const code = await spawnCommand("git", cloneArgs, { cwd: clonePlan.cloneCwd });
   if (code !== 0) {
     return code;
   }
@@ -645,6 +673,22 @@ function handleShellInit() {
     "    shift",
     "    local __dev_dest",
     '    if ! __dev_dest="$(command dev cd \"$@\")"; then',
+    "      return $?",
+    "    fi",
+    '    if [ -n "$__dev_dest" ]; then',
+    '      builtin cd "$__dev_dest"',
+    "    fi",
+    "    return 0",
+    "  fi",
+    '  if [ "$1" = "clone" ] && [ -n "$2" ]; then',
+    '    local __dev_target="$2"',
+    '    command dev "$@"',
+    "    local __dev_code=$?",
+    '    if [ "$__dev_code" -ne 0 ]; then',
+    "      return $__dev_code",
+    "    fi",
+    "    local __dev_dest",
+    '    if ! __dev_dest="$(command dev cd "$__dev_target")"; then',
     "      return $?",
     "    fi",
     '    if [ -n "$__dev_dest" ]; then',
@@ -773,7 +817,7 @@ export async function runCli(args, cwd = process.cwd()) {
   }
 
   if (command === "clone") {
-    const code = await handleClone(args[1], cwd);
+    const code = await handleClone(args[1], cwd, homeDir);
     if (code !== 0) process.exitCode = code;
     return code;
   }
@@ -851,4 +895,5 @@ export const _internal = {
   findDevConfigPath,
   normalizeRepo,
   repoFolderName,
+  resolveClonePlan,
 };

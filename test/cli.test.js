@@ -104,6 +104,30 @@ test("repoFolderName strips .git suffix", () => {
   assert.equal(_internal.repoFolderName("git@github.com:owner/repo.git"), "repo");
 });
 
+test("resolveClonePlan uses first configured root for owner/repo", async () => {
+  await withTempDir(async (dir) => {
+    const roots = [path.join(dir, "src", "github.com"), path.join(dir, "Projects")];
+    const plan = _internal.resolveClonePlan("acme/api", roots, path.join(dir, "nested", "cwd"));
+
+    assert.equal(plan.cloneCwd, path.join(roots[0], "acme"));
+    assert.equal(plan.destination, path.join(roots[0], "acme", "api"));
+  });
+});
+
+test("resolveClonePlan uses first configured root for non-github URLs", async () => {
+  await withTempDir(async (dir) => {
+    const roots = [path.join(dir, "src", "github.com")];
+    const plan = _internal.resolveClonePlan(
+      "https://gitlab.com/acme/api.git",
+      roots,
+      path.join(dir, "nested", "cwd"),
+    );
+
+    assert.equal(plan.cloneCwd, roots[0]);
+    assert.equal(plan.destination, null);
+  });
+});
+
 test("getDevRoots defaults to ~/src/github.com", async () => {
   await withTempDir(async (homeDir) => {
     const roots = _internal.getDevRoots(homeDir);
@@ -257,6 +281,8 @@ test("runCli shell-init prints a shell wrapper function", async () => {
     const output = await captureStdout(() => runCli(["shell-init"], dir));
     assert.match(output, /dev\(\) \{/);
     assert.match(output, /command dev cd/);
+    assert.match(output, /if \[ "\$1" = "clone" \] && \[ -n "\$2" \]; then/);
+    assert.match(output, /__dev_target/);
     assert.match(output, /builtin cd/);
   });
 });
