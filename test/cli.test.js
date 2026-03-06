@@ -271,6 +271,7 @@ test("runCli help lists project tasks and aliases", async () => {
     assert.match(output, /Project Tasks:/);
     assert.match(output, /dev cd <repo\|owner\/repo\|path>/);
     assert.match(output, /dev shell-init/);
+    assert.match(output, /Add this to ~\/\.zshrc or ~\/\.bashrc:/);
     assert.match(output, /server - Start local dev server \(aliases: s\)/);
     assert.match(output, /check/);
   });

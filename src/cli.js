@@ -772,6 +772,10 @@ function printHelp(cwd = process.cwd()) {
     "  dev check",
     "  dev clone myorg/myrepo",
     "  dev clone git@github.com:myorg/myrepo.git",
+    "",
+    "Shell startup:",
+    "  Add this to ~/.zshrc or ~/.bashrc:",
+    "    eval \"$(dev shell-init)\"",
   ];
 
   const devPath = findDevConfigPath(cwd);
